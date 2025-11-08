@@ -9,7 +9,7 @@
 * Language: **C# / .NET 8**. Target: Jellyfin 10.9+ plugin.
 * Core invariant: For each play, pick audio/subtitle indices using **per‑user rules** with precedence **Series > Library > Global**; **never** mutate media files.
 * Apply choice by sending session general commands: **SetAudioStreamIndex** then **SetSubtitleStreamIndex** to the active session.
-* Provide a **Series/Show page widget** so users can set per‑series defaults via two dropdowns (Audio/Subs), plus a small **Admin & Self‑Service dashboard** for Global/Library rules.
+* Provide an **admin/self-service dashboard page** inside the plugin configuration UI so admins (and individual users when allowed) can manage per-user rules at all scopes without touching the Jellyfin web bundle.
 
 ---
 
@@ -21,8 +21,8 @@
 
 1. Per‑user rules at 3 scopes with fixed precedence: Series → Library → Global.
 2. Server‑side enforcement at playback start (no client mods).
-3. User‑friendly UI directly on the **Series/Show page** (two dropdowns, optional chip priority), plus a dashboard page.
-4. Preview/"Apply now" to test on the current session without restarting playback.
+3. User‑friendly UI inside the plugin’s dashboard page that lets admins manage per-user Global/Library/Series rules (searchable series picker, per-scope editors).
+4. Preview/"Apply now" (API already surfaced) to test on the current session without restarting playback.
 5. Guardrail: optional "Don’t transcode" rule flag.
 
 **Non‑Goals**
@@ -47,8 +47,7 @@ TrackRules.Plugin
 │  ├─ TrackRulesController.cs  # REST: get/put rules, preview, apply, helpers
 │  └─ Dtos.cs                  # API DTOs separate from domain
 ├─ Ui/
-│  ├─ dashboard.html + .js     # Admin/self‑service rule editor
-│  └─ series-widget.js         # Injected widget on Series/Show page
+│  └─ dashboard.html           # Admin/self‑service rule editor (inline JS)
 ├─ Plugin.cs                  # BasePlugin<T>, registration, web assets
 └─ tests/
    ├─ ResolverTests.cs
@@ -147,31 +146,25 @@ Auth: respect Jellyfin auth; a non‑admin may **only** read/write their own use
 
 ## 6) UI
 
-### 6.1 Series/Show Widget (user‑facing, simple)
+### 6.1 Plugin configuration page (admin & self‑service)
 
-**Placement**: Series/Show page right column (below overview) — titled **“Playback defaults (for you)”**.
+The primary UI is the plugin configuration page at **Dashboard → Plugins → Track Rules** (served from `Ui/dashboard.html`). It works on desktop/tablet without any jellyfin-web modifications and provides:
 
-Controls:
+* **User selector** – lists all enabled Jellyfin users (admins see everyone, non-admins only themselves). Loading a user fetches `GET /TrackRules/user/{userId}` and hydrates the editor.
+* **Rule editor** – a single form that can create or edit Global, Library, or Series rules:
+  * Scope dropdown (`Global`, `Library`, `Series`).
+  * Library picker populated from `includeItemTypes=CollectionFolder`.
+  * Series picker with server-side search (calls `/Items?IncludeItemTypes=Series&SearchTerm=…`); selecting a result stores the series Id/Name.
+  * Audio/Subtitle priority inputs (comma-separated ISO639 codes or keywords `any` / `none`), subtitle mode select, “Don’t transcode” toggle, enabled toggle.
+  * Save button upserts the rule into the loaded rule set and persists via `PUT /TrackRules/user/{userId}`. Clear button resets the editor.
+* **Existing rule cards** – rendered in precedence order (Series → Library → Global) with quick summaries, Edit/Delete buttons, and badges for guard/enable states. Delete removes the rule and re-saves immediately.
+* **Status toasts** – inline status rows confirm load/save/delete operations. Errors bubble to the console plus a red status message.
 
-* **Audio** dropdown: `Inherit (Library)` | `Custom…` → chip row appears `[ENG][JPN][ANY]` (drag to reorder, autocomplete languages)
-* **Subtitles** dropdown: `Off` | `Prefer forced` | `Full` | `Inherit (Library)`
-* Toggle: `Don’t transcode` (per series)
-* Buttons: `Save`, `Reset to inherit`, `Apply now`
-* **Preview row**: “Will pick: **ENG** audio, **ENG (forced)** subs”
+Preview/apply endpoints remain exposed for advanced testing, but the dashboard focuses on editing stored rules. Future “Apply now” controls can hook the existing `/preview` and `/apply` APIs if needed.
 
-**Data flow**
+### 6.2 Deferred: Series/Show widget
 
-* On open: `GET /series/{id}/languages` & `GET /user/{userId}` (extract the effective rule).
-* On save: `PUT /user/{userId}` with Series rule upsert.
-* On apply: `POST /apply` to current session.
-
-### 6.2 Dashboard (admin & self‑service)
-
-Tabs: **Global**, **Library**, **Series**.
-
-* Rule cards read like sentences: “For **Movies**: Audio **ENG→JPN**, Subs **ENG forced**, Don’t transcode: **off**”.
-* Quick templates: *Anime (JPN + ENG subs)*, *Dubs (ENG, no subs)*, *Kids (ENG, subs off)*.
-* Admin extras: clone rules to users, import/export JSON.
+Direct on-page controls inside the Series detail view are deferred until we upstream a lightweight loader into `jellyfin-web`. The existing `series-widget.js` implementation can be revived once the client loads plugin scripts natively; for now, all user-facing rule management happens in the configuration page.
 
 ---
 
@@ -199,15 +192,16 @@ Tabs: **Global**, **Library**, **Series**.
 * [x] `/preview` computes selection & risk
 * [x] `/apply` targets a session reliably
 
-**M3 – Series Widget**
+**M3 – Dashboard Rule Editor**
 
-* [x] Minimal two‑dropdown UI with preview & save
-* [x] Aggregated language lists across series
+* [x] Config page lists users + loads rule sets
+* [x] Single editor form handles Global/Library/Series rules (with series search + library picker)
+* [x] Rule list with edit/delete workflows wired to REST API
 
-**M4 – Dashboard**
+**M4 – Dashboard Enhancements**
 
-* [ ] Global/Library/Series tabs
-* [ ] Templates + clone + import/export
+* [ ] Templates (Anime/Dubs/Kids) + rule cloning across users
+* [ ] Import/export JSON for bulk edits
 
 **M5 – Guard & Tests**
 
@@ -246,7 +240,7 @@ dotnet build -c Release
 
 **UI dev**
 
-* Serve `Ui/series-widget.js` with live reload (optional). Bundle to `/web/` assets for plugin.
+* Plugin UI is served directly from embedded assets (`Ui/dashboard.html`). Use any static-server/live-reload workflow you like, then embed inline JS/CSS (no jellyfin-web rebuild required). The deferred series widget remains optional until the upstream web bundle loads plugin scripts natively.
 
 ---
 
@@ -271,7 +265,7 @@ dotnet build -c Release
 * Per‑folder overrides within a library.
 * Rule import from `.mkv` tags (read‑only hints).
 * Admin reports: show “rules with no effect” (e.g., language not present in series).
-* Optional PR to `jellyfin-web` to host the Series widget natively.
+* Optional PR to `jellyfin-web` (or a loader plugin) so the series widget can ship without manual client patches.
 
 ---
 
@@ -294,7 +288,7 @@ dotnet build -c Release
 
 ## 16) Quick Issue Templates
 
-**feat:** Series widget: add "Use current episode tracks as series default" button.
+**feat:** Dashboard: add "Use current playback languages" quick-fill button.
 
 **bug:** Subtitle command ignored on WebOS vX — add retry + client capability check.
 
