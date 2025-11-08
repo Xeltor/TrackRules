@@ -1,0 +1,40 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.configuration }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore TrackRules.Plugin/TrackRules.Plugin.sln
+
+      - name: Build
+        run: dotnet build TrackRules.Plugin/TrackRules.Plugin.sln --configuration ${{ matrix.configuration }} --no-restore
+
+      - name: Publish plugin
+        run: dotnet publish TrackRules.Plugin/TrackRules.Plugin.csproj --configuration ${{ matrix.configuration }} --no-build --no-restore --output ./artifacts/${{ matrix.configuration }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrackRules-${{ matrix.configuration }}
+          path: ./artifacts/${{ matrix.configuration }}
+          if-no-files-found: error
