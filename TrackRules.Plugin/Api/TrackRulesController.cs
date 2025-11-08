@@ -6,6 +6,7 @@ using System.Net.Mime;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.TrackRules.Core;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
@@ -330,7 +331,7 @@ public sealed class TrackRulesController : ControllerBase
         {
             ParentId = seriesId,
             Recursive = true,
-            IncludeItemTypes = new[] { nameof(Episode) }
+            IncludeItemTypes = new[] { BaseItemKind.Episode }
         };
 
         var items = _libraryManager.GetItemList(query);
@@ -348,14 +349,14 @@ public sealed class TrackRulesController : ControllerBase
             foreach (var audioStream in streams.Where(stream => stream.Type == MediaStreamType.Audio))
             {
                 var code = NormalizeLanguage(audioStream.Language);
-                var label = ResolveLanguageLabel(code, audioStream.DisplayLanguage ?? audioStream.Language);
+                var label = ResolveLanguageLabel(code, audioStream.Title ?? audioStream.Language);
                 aggregate.AddAudio(code, label);
             }
 
             foreach (var subtitleStream in streams.Where(stream => stream.Type == MediaStreamType.Subtitle))
             {
                 var code = NormalizeLanguage(subtitleStream.Language);
-                var label = ResolveLanguageLabel(code, subtitleStream.DisplayLanguage ?? subtitleStream.Language);
+                var label = ResolveLanguageLabel(code, subtitleStream.Title ?? subtitleStream.Language);
                 aggregate.AddSubtitle(code, label);
             }
         }
