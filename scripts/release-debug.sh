@@ -7,10 +7,11 @@ usage() {
 Usage: scripts/release-debug.sh <version> [release-notes-file]
 
 Builds the plugin in Debug configuration, zips the output, uploads it to a GitHub
-release, and appends the release metadata to manifest.json.
+release, and synchronises TrackRules.Plugin/meta.json plus manifest.json so they
+always carry the correct version/changelog pair.
 
 Arguments:
-  version              Version string recorded inside manifest.json (e.g. 0.2.0-debug.1)
+  version              Debug version string (e.g. 0.2.0-debug.1). Required.
   release-notes-file   Optional file containing release notes; defaults to TrackRules.Plugin/meta.json changelog.
 
 Environment:
@@ -40,10 +41,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 VERSION="$1"
-MANIFEST_VERSION="${VERSION//-debug/}"
 
-if [[ "$MANIFEST_VERSION" != "$VERSION" ]]; then
-  echo "Manifest version sanitized: $VERSION -> $MANIFEST_VERSION"
+if [[ "$VERSION" != *-debug* ]]; then
+  echo "error: version '$VERSION' must contain -debug suffix (e.g. 0.2.0-debug.1)." >&2
+  exit 1
+fi
+
+MANIFEST_VERSION="${VERSION%%-debug*}"
+
+if [[ -z "$MANIFEST_VERSION" ]]; then
+  echo "error: Unable to derive manifest version from $VERSION" >&2
+  exit 1
 fi
 NOTES_FILE="${2:-}"
 META_JSON="$REPO_ROOT/TrackRules.Plugin/meta.json"
@@ -86,6 +94,21 @@ if ! jq --arg guid "$PLUGIN_GUID" 'map(select(.guid == $guid)) | length > 0' "$M
   echo "error: manifest.json does not contain plugin guid $PLUGIN_GUID" >&2
   exit 1
 fi
+
+TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+update_meta_file() {
+  echo "Updating meta.json..."
+  jq --arg version "$MANIFEST_VERSION" \
+     --arg changelog "$RELEASE_NOTES" \
+     --arg timestamp "$TIMESTAMP" \
+     '.version = $version | .changelog = $changelog | .timestamp = $timestamp' \
+     "$META_JSON" > "$META_JSON.tmp"
+
+  mv "$META_JSON.tmp" "$META_JSON"
+}
+
+update_meta_file
 
 ARTIFACT_DIR="$REPO_ROOT/artifacts"
 PUBLISH_DIR="$ARTIFACT_DIR/publish"
@@ -137,8 +160,6 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 else
   gh release create "$TAG" "$ARTIFACT_PATH" --title "$TITLE" --notes "$RELEASE_NOTES" --prerelease >/dev/null
 fi
-
-TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 echo "Updating manifest.json..."
 jq --arg guid "$PLUGIN_GUID" \
