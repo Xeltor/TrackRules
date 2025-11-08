@@ -28,7 +28,7 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
   exit 1
 fi
 
-for cmd in dotnet gh jq zip sha256sum; do
+for cmd in dotnet gh jq zip md5sum; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: Required command '$cmd' not found in PATH." >&2
     exit 1
@@ -97,7 +97,7 @@ echo "Packing artifact $ARTIFACT_NAME..."
 rm -f "$ARTIFACT_PATH"
 (cd "$PUBLISH_DIR" && zip -qr "$ARTIFACT_PATH" .)
 
-CHECKSUM="$(sha256sum "$ARTIFACT_PATH" | awk '{print $1}')"
+CHECKSUM="$(md5sum "$ARTIFACT_PATH" | awk '{print $1}')"
 
 detect_repo_slug() {
   local slug remote
