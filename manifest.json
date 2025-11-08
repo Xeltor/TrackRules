@@ -8,6 +8,14 @@
     "category": "Playback",
     "versions": [
       {
+        "version": "0.1.0.4",
+        "changelog": "Dashboard editor now loads users reliably for admins/non-admins and avoids Jellyfin translation errors by moving logic to an external script.",
+        "targetAbi": "10.9.11.0",
+        "sourceUrl": "https://github.com/Xeltor/TrackRules/releases/download/v0.1.0.4-debug.1-debug/TrackRules.Debug.0.1.0.4-debug.1.zip",
+        "checksum": "78d2a15d4e53100eb4b04f34a7bc188e",
+        "timestamp": "2025-11-08T13:10:02Z"
+      },
+      {
         "version": "0.1.0.3",
         "changelog": "Initial developer build with rule storage, resolver, REST surface, and session hook.",
         "targetAbi": "10.9.11.0",
