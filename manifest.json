@@ -1,0 +1,36 @@
+{
+  "name": "Track Rules Plugin Repository",
+  "guid": "5c11b708-1af0-4606-90e4-b2b68536d581",
+  "description": "Plugin repository manifest for Track Rules developer builds.",
+  "version": 1,
+  "catalog": [
+    {
+      "name": "Track Rules",
+      "guid": "f4903c07-0d28-4183-9960-f870d61d07a3",
+      "category": "Playback",
+      "owner": "Xelflix Labs",
+      "overview": "Pick the right audio/subtitle tracks automatically per user, honoring Series → Library → Global precedence.",
+      "changelog": "Initial developer build with rule storage, resolver, REST surface, and session hook.",
+      "versions": [
+        {
+          "version": "0.1.0-debug",
+          "targetAbi": "10.9.11.0",
+          "sourceUrl": "https://example.com/TrackRules.Plugin.Debug.zip",
+          "checksum": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "timestamp": "2024-11-08T00:00:00Z",
+          "classification": "Debug",
+          "prerelease": true
+        },
+        {
+          "version": "0.1.0.0",
+          "targetAbi": "10.9.11.0",
+          "sourceUrl": "https://example.com/TrackRules.Plugin.Release.zip",
+          "checksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "timestamp": "2024-11-08T00:00:00Z",
+          "classification": "Release",
+          "prerelease": false
+        }
+      ]
+    }
+  ]
+}
