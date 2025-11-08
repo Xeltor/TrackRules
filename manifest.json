@@ -8,6 +8,14 @@
     "category": "Playback",
     "versions": [
       {
+        "version": "0.1.0.3.1",
+        "changelog": "Initial developer build with rule storage, resolver, REST surface, and session hook.",
+        "targetAbi": "10.9.11.0",
+        "sourceUrl": "https://github.com/Xeltor/TrackRules/releases/download/v0.1.0.3-debug.1-debug/TrackRules.Debug.0.1.0.3-debug.1.zip",
+        "checksum": "4d7f5cf3a8ff6dc43a85efaea3c4070e",
+        "timestamp": "2025-11-08T12:50:42Z"
+      },
+      {
         "version": "0.1.0.2",
         "changelog": "Initial developer build with rule storage, resolver, REST surface, and session hook.",
         "targetAbi": "10.9.11.0",
