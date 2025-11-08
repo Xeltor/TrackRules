@@ -1,0 +1,11 @@
+[
+  {
+    "guid": "f4903c07-0d28-4183-9960-f870d61d07a3",
+    "name": "Track Rules",
+    "description": "Server-side audio and subtitle default selection with Series → Library → Global rule precedence.",
+    "overview": "Pick the right audio/subtitle tracks automatically per user, honoring Series → Library → Global precedence.",
+    "owner": "Xelflix Labs",
+    "category": "Playback",
+    "versions": []
+  }
+]

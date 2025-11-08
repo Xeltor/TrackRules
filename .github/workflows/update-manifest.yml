@@ -1,0 +1,44 @@
+name: Update manifest
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  manifest:
+    name: Update manifest.json
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        run: |
+          mkdir -p dist
+          gh release download "${{ github.event.release.tag_name }}" --dir dist --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update manifest.json
+        run: |
+          node .github/scripts/update-manifest.js manifest.json dist
+        env:
+          RELEASE_PAYLOAD: ${{ toJson(github.event.release) }}
+          TARGET_ABI: 10.9.0.0
+
+      - name: Commit changes
+        run: |
+          if git diff --quiet manifest.json; then
+            echo "No manifest changes detected."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "Update manifest for ${{ github.event.release.tag_name }}"
+          git push
+

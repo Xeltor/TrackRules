@@ -1,0 +1,93 @@
+name: Publish Release
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    env:
+      PROJECT_FILE: TrackRules.Plugin/TrackRules.Plugin.csproj
+      SOLUTION_FILE: TrackRules.Plugin/TrackRules.Plugin.sln
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION=$(grep -oPm1 '(?<=<Version>)[^<]+' "$PROJECT_FILE")
+          if [ -z "$VERSION" ]; then
+            echo "Unable to determine plugin version from $PROJECT_FILE" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG already exists."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore dependencies
+        if: steps.release.outputs.exists != 'true'
+        run: dotnet restore "$SOLUTION_FILE"
+
+      - name: Publish Debug build
+        if: steps.release.outputs.exists != 'true'
+        run: dotnet publish "$PROJECT_FILE" --configuration Debug --output ./publish/Debug --no-restore
+
+      - name: Ensure zip is available
+        if: steps.release.outputs.exists != 'true'
+        run: |
+          if ! command -v zip >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y zip
+          fi
+
+      - name: Package Debug artifact
+        if: steps.release.outputs.exists != 'true'
+        run: |
+          mkdir -p dist
+          ARCHIVE="TrackRules-Debug-v${{ steps.version.outputs.version }}.zip"
+          pushd publish/Debug >/dev/null
+          zip -r "../../dist/$ARCHIVE" .
+          popd >/dev/null
+
+      - name: Create GitHub release
+        if: steps.release.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          TITLE="Track Rules ${{ steps.version.outputs.version }}"
+          NOTES="Automated release for commit ${{ github.sha }}"
+          gh release create "$TAG" dist/*.zip --title "$TITLE" --notes "$NOTES"
+
+      - name: Upload workflow artifacts
+        if: steps.release.outputs.exists != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrackRules-release-assets
+          path: dist/*.zip
+          if-no-files-found: error

@@ -1,0 +1,93 @@
+name: Build Release Artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to update (defaults to v<version> from csproj)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build manual release artifact
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_FILE: TrackRules.Plugin/TrackRules.Plugin.csproj
+      SOLUTION_FILE: TrackRules.Plugin/TrackRules.Plugin.sln
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve version
+        id: version
+        run: |
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+            if [[ ! $TAG =~ ^v ]]; then
+              TAG="v$TAG"
+            fi
+            VERSION="${TAG#v}"
+          else
+            VERSION=$(grep -oPm1 '(?<=<Version>)[^<]+' "$PROJECT_FILE")
+            if [ -z "$VERSION" ]; then
+              echo "Unable to determine plugin version from $PROJECT_FILE" >&2
+              exit 1
+            fi
+            TAG="v$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Release ${{ steps.version.outputs.tag }} does not exist. Create it first from the GitHub UI or publish workflow." >&2
+            exit 1
+          fi
+
+      - name: Restore dependencies
+        run: dotnet restore "$SOLUTION_FILE"
+
+      - name: Publish Release build
+        run: dotnet publish "$PROJECT_FILE" --configuration Release --output ./publish/Release --no-restore
+
+      - name: Ensure zip is available
+        run: |
+          if ! command -v zip >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y zip
+          fi
+
+      - name: Package Release artifact
+        run: |
+          mkdir -p dist
+          ARCHIVE="TrackRules-Release-v${{ steps.version.outputs.version }}.zip"
+          pushd publish/Release >/dev/null
+          zip -r "../../dist/$ARCHIVE" .
+          popd >/dev/null
+
+      - name: Upload asset to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.version.outputs.tag }}" dist/TrackRules-Release-v${{ steps.version.outputs.version }}.zip --clobber
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrackRules-release-asset
+          path: dist/TrackRules-Release-v${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
