@@ -201,8 +201,8 @@ Tabs: **Global**, **Library**, **Series**.
 
 **M3 – Series Widget**
 
-* [ ] Minimal two‑dropdown UI with preview & save
-* [ ] Aggregated language lists across series
+* [x] Minimal two‑dropdown UI with preview & save
+* [x] Aggregated language lists across series
 
 **M4 – Dashboard**
 

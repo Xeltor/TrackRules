@@ -30,5 +30,6 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Ui\**\*.html" />
+    <EmbeddedResource Include="Ui\**\*.js" />
   </ItemGroup>
 </Project>

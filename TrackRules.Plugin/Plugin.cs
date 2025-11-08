@@ -51,6 +51,14 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                     CultureInfo.InvariantCulture,
                     "{0}.Ui.dashboard.html",
                     GetType().Namespace)
+            },
+            new PluginPageInfo
+            {
+                Name = "trackrules-series-widget.js",
+                EmbeddedResourcePath = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}.Ui.series-widget.js",
+                    GetType().Namespace)
             }
         ];
     }
