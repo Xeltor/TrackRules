@@ -40,6 +40,32 @@ public sealed class TrackRuleDto
 }
 
 /// <summary>
+/// Aggregated language options for a series.
+/// </summary>
+public sealed class SeriesLanguageOptionsDto
+{
+    public Guid SeriesId { get; set; }
+
+    public Guid? PreviewItemId { get; set; }
+
+    public List<LanguageOptionDto> Audio { get; set; } = new();
+
+    public List<LanguageOptionDto> Subtitles { get; set; } = new();
+}
+
+/// <summary>
+/// Represents an individual language option surfaced to the UI.
+/// </summary>
+public sealed class LanguageOptionDto
+{
+    public string Code { get; set; } = string.Empty;
+
+    public string Label { get; set; } = string.Empty;
+
+    public int StreamCount { get; set; }
+}
+
+/// <summary>
 /// DTO describing a preview request payload.
 /// </summary>
 public sealed class PreviewRequestDto
@@ -49,6 +75,11 @@ public sealed class PreviewRequestDto
 
     [Required]
     public Guid ItemId { get; set; }
+
+    /// <summary>
+    /// Optional rule override used when previewing unsaved changes.
+    /// </summary>
+    public TrackRuleDto? OverrideRule { get; set; }
 }
 
 /// <summary>
@@ -127,7 +158,7 @@ internal static class TrackRuleDtoMapper
         {
             UserId = dto.UserId,
             Version = dto.Version,
-            Rules = dto.Rules.Select(ToDomain).ToList()
+            Rules = dto.Rules.Select(ToDomainRule).ToList()
         };
 
         return ruleSet;
@@ -147,7 +178,7 @@ internal static class TrackRuleDtoMapper
         };
     }
 
-    private static TrackRule ToDomain(TrackRuleDto dto)
+    public static TrackRule ToDomainRule(TrackRuleDto dto)
     {
         return new TrackRule
         {

@@ -6,8 +6,11 @@ using System.Net.Mime;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.TrackRules.Core;
+using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Entities;
@@ -36,6 +39,7 @@ public sealed class TrackRulesController : ControllerBase
     private readonly ILibraryManager _libraryManager;
     private readonly IMediaSourceManager _mediaSourceManager;
     private readonly ISessionManager _sessionManager;
+    private readonly ILanguageNormalizer _languageNormalizer;
     private readonly ILogger<TrackRulesController> _logger;
 
     /// <summary>
@@ -47,6 +51,7 @@ public sealed class TrackRulesController : ControllerBase
         ILibraryManager libraryManager,
         IMediaSourceManager mediaSourceManager,
         ISessionManager sessionManager,
+        ILanguageNormalizer languageNormalizer,
         ILogger<TrackRulesController> logger)
     {
         _ruleStore = ruleStore;
@@ -54,6 +59,7 @@ public sealed class TrackRulesController : ControllerBase
         _libraryManager = libraryManager;
         _mediaSourceManager = mediaSourceManager;
         _sessionManager = sessionManager;
+        _languageNormalizer = languageNormalizer;
         _logger = logger;
     }
 
@@ -160,6 +166,12 @@ public sealed class TrackRulesController : ControllerBase
         }
 
         var ruleSet = await _ruleStore.GetAsync(request.UserId, cancellationToken).ConfigureAwait(false);
+
+        if (request.OverrideRule is not null)
+        {
+            var overrideRule = TrackRuleDtoMapper.ToDomainRule(request.OverrideRule);
+            ApplyOverrideRule(ruleSet, overrideRule);
+        }
         if (ruleSet.Rules.Count == 0)
         {
             return Ok(new PreviewResultDto
@@ -195,6 +207,24 @@ public sealed class TrackRulesController : ControllerBase
         };
 
         return Ok(preview);
+    }
+
+    /// <summary>
+    /// Aggregates available languages for a series to populate the UI widget.
+    /// </summary>
+    [HttpGet("series/{seriesId:guid}/languages")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public ActionResult<SeriesLanguageOptionsDto> GetSeriesLanguages([FromRoute] Guid seriesId)
+    {
+        var series = _libraryManager.GetItemById(seriesId);
+        if (series is null)
+        {
+            return NotFound();
+        }
+
+        var options = AggregateSeriesLanguages(seriesId);
+        return Ok(options);
     }
 
     /// <summary>
@@ -273,6 +303,112 @@ public sealed class TrackRulesController : ControllerBase
             .FirstOrDefault(session => string.Equals(session.Id, sessionId, StringComparison.OrdinalIgnoreCase));
     }
 
+    private void ApplyOverrideRule(UserRuleSet ruleSet, TrackRule overrideRule)
+    {
+        if (overrideRule is null)
+        {
+            return;
+        }
+
+        if (overrideRule.Scope != RuleScope.Global && overrideRule.TargetId is null)
+        {
+            return;
+        }
+
+        ruleSet.Rules.RemoveAll(rule =>
+            rule.Scope == overrideRule.Scope &&
+            Nullable.Equals(rule.TargetId, overrideRule.TargetId));
+
+        ruleSet.Rules.Add(overrideRule);
+    }
+
+    private SeriesLanguageOptionsDto AggregateSeriesLanguages(Guid seriesId)
+    {
+        var aggregate = new LanguageAggregate();
+        Guid? previewItemId = null;
+
+        var query = new InternalItemsQuery
+        {
+            ParentId = seriesId,
+            Recursive = true,
+            IncludeItemTypes = new[] { BaseItemKind.Episode }
+        };
+
+        var items = _libraryManager.GetItemList(query);
+
+        foreach (var item in items)
+        {
+            var streams = _mediaSourceManager.GetMediaStreams(item.Id);
+            if (streams.Count == 0)
+            {
+                continue;
+            }
+
+            previewItemId ??= item.Id;
+
+            foreach (var audioStream in streams.Where(stream => stream.Type == MediaStreamType.Audio))
+            {
+                var code = NormalizeLanguage(audioStream.Language);
+                var label = ResolveLanguageLabel(code, audioStream.Title ?? audioStream.Language);
+                aggregate.AddAudio(code, label);
+            }
+
+            foreach (var subtitleStream in streams.Where(stream => stream.Type == MediaStreamType.Subtitle))
+            {
+                var code = NormalizeLanguage(subtitleStream.Language);
+                var label = ResolveLanguageLabel(code, subtitleStream.Title ?? subtitleStream.Language);
+                aggregate.AddSubtitle(code, label);
+            }
+        }
+
+        return new SeriesLanguageOptionsDto
+        {
+            SeriesId = seriesId,
+            PreviewItemId = previewItemId,
+            Audio = aggregate.GetAudioOptions(),
+            Subtitles = aggregate.GetSubtitleOptions()
+        };
+    }
+
+    private string NormalizeLanguage(string? language)
+    {
+        var normalized = _languageNormalizer.Normalize(language);
+        return string.IsNullOrEmpty(normalized) ? "und" : normalized;
+    }
+
+    private static string ResolveLanguageLabel(string code, string? preferred)
+    {
+        if (!string.IsNullOrWhiteSpace(preferred))
+        {
+            return preferred;
+        }
+
+        if (string.IsNullOrWhiteSpace(code) || code.Equals("und", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Unknown / Unspecified";
+        }
+
+        try
+        {
+            var culture = CultureInfo
+                .GetCultures(CultureTypes.AllCultures)
+                .FirstOrDefault(c =>
+                    string.Equals(c.ThreeLetterISOLanguageName, code, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.TwoLetterISOLanguageName, code, StringComparison.OrdinalIgnoreCase));
+
+            if (culture is not null)
+            {
+                return culture.NativeName;
+            }
+        }
+        catch (CultureNotFoundException)
+        {
+            // Ignore and fall back to the code.
+        }
+
+        return code.ToUpperInvariant();
+    }
+
     private static Guid? ResolveSeriesId(BaseItem item)
     {
         if (item is IHasSeries hasSeries)
@@ -316,6 +452,78 @@ public sealed class TrackRulesController : ControllerBase
             claim => claim.Type.Equals(UserIdClaimType, StringComparison.OrdinalIgnoreCase))?.Value;
 
         return Guid.TryParse(value, out var parsed) ? parsed : Guid.Empty;
+    }
+
+    private sealed class LanguageAggregate
+    {
+        private readonly Dictionary<string, LanguageBucket> _audio = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, LanguageBucket> _subtitles = new(StringComparer.OrdinalIgnoreCase);
+
+        public void AddAudio(string code, string label)
+        {
+            Add(_audio, code, label);
+        }
+
+        public void AddSubtitle(string code, string label)
+        {
+            Add(_subtitles, code, label);
+        }
+
+        public List<LanguageOptionDto> GetAudioOptions()
+        {
+            return Project(_audio);
+        }
+
+        public List<LanguageOptionDto> GetSubtitleOptions()
+        {
+            return Project(_subtitles);
+        }
+
+        private static void Add(Dictionary<string, LanguageBucket> map, string code, string label)
+        {
+            var key = string.IsNullOrWhiteSpace(code) ? "und" : code;
+            if (!map.TryGetValue(key, out var bucket))
+            {
+                bucket = new LanguageBucket(key, label);
+                map[key] = bucket;
+            }
+
+            bucket.Increment();
+        }
+
+        private static List<LanguageOptionDto> Project(Dictionary<string, LanguageBucket> map)
+        {
+            return map.Values
+                .OrderByDescending(bucket => bucket.Count)
+                .ThenBy(bucket => bucket.Label, StringComparer.CurrentCultureIgnoreCase)
+                .Select(bucket => new LanguageOptionDto
+                {
+                    Code = bucket.Code,
+                    Label = bucket.Label,
+                    StreamCount = bucket.Count
+                })
+                .ToList();
+        }
+
+        private sealed class LanguageBucket
+        {
+            public LanguageBucket(string code, string label)
+            {
+                Code = code;
+                Label = string.IsNullOrWhiteSpace(label) ? code.ToUpperInvariant() : label;
+            }
+
+            public string Code { get; }
+
+            public string Label { get; }
+
+            public int Count { get; private set; }
+
+            public void Increment()
+            {
+                Count++;
+            }
+        }
     }
 
     private string? DescribeScope(RuleScope? scope)
