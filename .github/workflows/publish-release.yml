@@ -1,8 +1,11 @@
 name: Publish Release
 
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Optional flag to run the publish workflow manually."
+        required: false
 
 permissions:
   contents: write
