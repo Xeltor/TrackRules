@@ -4,29 +4,38 @@
   const SUB_NONE = 'none';
   const SUB_ANY = 'any';
   const SUBTITLE_MODE_DEFAULT = 1;
-  const WIDGET_CLASS = 'trackrules-series-widget';
+  const WIDGET_CLASS = 'trackrules-series-defaults';
+
+  const SUBTITLE_MODES = [
+    { value: 1, label: 'Match server default' },
+    { value: 2, label: 'Prefer forced tracks' },
+    { value: 3, label: 'Always show subtitles' },
+    { value: 4, label: 'Only if audio is not preferred' },
+    { value: 0, label: 'Never enable subtitles' },
+  ];
 
   document.addEventListener('viewshow', onViewShow);
 
   function onViewShow(event) {
     const view = event.target;
-    if (!view || !view.classList || !view.classList.contains('itemDetailPage')) {
+    if (!isItemDetailView(view)) {
       return;
     }
 
     const params = event.detail && event.detail.params ? event.detail.params : {};
     const itemId = params.id;
     if (!itemId) {
+      removeWidget(view);
       return;
     }
 
     const apiClient = getApiClient();
-    if (!apiClient || typeof apiClient.getCurrentUserId !== 'function') {
-      return;
-    }
+    const userId = apiClient && typeof apiClient.getCurrentUserId === 'function'
+      ? apiClient.getCurrentUserId()
+      : null;
 
-    const userId = apiClient.getCurrentUserId();
-    if (!userId) {
+    if (!apiClient || !userId) {
+      removeWidget(view);
       return;
     }
 
@@ -39,7 +48,14 @@
 
         renderWidget(view, item, userId);
       })
-      .catch((err) => console.error('[TrackRules] Failed to inspect item', err));
+      .catch((err) => {
+        console.error('[TrackRules] Unable to inspect item', err);
+        removeWidget(view);
+      });
+  }
+
+  function isItemDetailView(view) {
+    return !!(view && view.classList && view.classList.contains('itemDetailPage'));
   }
 
   function getApiClient() {
@@ -47,119 +63,179 @@
   }
 
   function renderWidget(view, series, userId) {
-    const host = view.querySelector('.detailPagePrimaryContent');
-    if (!host) {
+    const anchor = view.querySelector('.trackSelections');
+    if (!anchor || !anchor.parentElement) {
       return;
     }
 
     removeWidget(view);
 
     const section = document.createElement('section');
-    section.className = `detailSection ${WIDGET_CLASS}`;
+    section.className = `${WIDGET_CLASS} detailSection`;
     section.dataset.seriesId = (series.Id || '').toString();
 
-    const header = document.createElement('h3');
-    header.className = 'sectionTitle';
-    header.textContent = 'Track Rules';
-    section.appendChild(header);
+    const heading = document.createElement('h3');
+    heading.className = 'sectionTitle';
+    heading.textContent = 'Series playback defaults';
+    section.appendChild(heading);
 
-    const description = document.createElement('p');
-    description.className = 'sectionSubtitle';
-    description.textContent = 'Choose default audio and subtitle tracks for this series.';
-    section.appendChild(description);
+    const hint = document.createElement('p');
+    hint.className = 'sectionSubtitle';
+    hint.textContent = 'Choose the audio and subtitle defaults you want applied when this series starts.';
+    section.appendChild(hint);
 
-    const form = document.createElement('div');
-    form.className = 'trackrules-widget-fields';
-
-    const audioField = createSelectField('Audio default');
-    audioField.select.classList.add('trackrules-audio');
-    form.appendChild(audioField.container);
-
-    const subtitleField = createSelectField('Subtitle default');
-    subtitleField.select.classList.add('trackrules-subs');
-    form.appendChild(subtitleField.container);
-
+    const form = document.createElement('form');
+    form.className = 'trackSelections focuscontainer-x trackrules-form';
+    form.addEventListener('submit', (e) => e.preventDefault());
     section.appendChild(form);
 
-    const actions = document.createElement('div');
-    actions.className = 'trackrules-widget-actions';
+    const audioField = createTrackSelect('Audio', 'trackrules-audio');
+    const subtitleField = createTrackSelect('Subtitles', 'trackrules-subs');
+    form.appendChild(audioField.container);
+    form.appendChild(subtitleField.container);
 
-    const previewButton = document.createElement('button');
-    previewButton.type = 'button';
-    previewButton.setAttribute('is', 'emby-button');
-    previewButton.className = 'raised button-raised trackrules-btn-preview';
-    previewButton.textContent = 'Preview';
-    actions.appendChild(previewButton);
+    const behaviorField = createTrackSelect('Subtitle behavior', 'trackrules-subs-mode');
+    behaviorField.container.classList.add('trackrules-submode-field');
+    form.appendChild(behaviorField.container);
 
-    const saveButton = document.createElement('button');
-    saveButton.type = 'button';
-    saveButton.setAttribute('is', 'emby-button');
-    saveButton.className = 'raised button-raised trackrules-btn-save';
-    saveButton.textContent = 'Save';
-    actions.appendChild(saveButton);
+    const guardField = createGuardField();
+    form.appendChild(guardField.container);
+
+    const actions = createActionRow();
+    form.appendChild(actions.container);
 
     const status = document.createElement('div');
     status.className = 'trackrules-status';
-    status.style.marginTop = '0.5em';
-    actions.appendChild(status);
+    form.appendChild(status);
 
-    section.appendChild(actions);
-
-    host.insertBefore(section, host.firstChild);
+    anchor.parentElement.insertBefore(section, anchor.nextSibling);
 
     section._trackRules = {
       elements: {
+        root: section,
+        form: form,
         audioSelect: audioField.select,
         subtitleSelect: subtitleField.select,
-        previewButton: previewButton,
-        saveButton: saveButton,
-        status: status,
+        subsModeSelect: behaviorField.select,
+        guardToggle: guardField.checkbox,
+        previewButton: actions.previewButton,
+        saveButton: actions.saveButton,
+        resetButton: actions.resetButton,
+        status,
       },
       state: {
         seriesId: section.dataset.seriesId,
-        userId: userId,
+        userId,
+        languages: null,
+        userRules: null,
+        previewItemId: null,
+        currentRule: null,
       },
     };
 
     attachEventHandlers(section, series);
     initializeWidget(section, series).catch((err) => {
-      console.error('[TrackRules] Failed to initialize widget', err);
-      setStatus(section, 'Unable to load Track Rules data.', true);
+      console.error('[TrackRules] Failed to initialize series defaults', err);
+      setStatus(section, 'Unable to load playback defaults for this series.', true);
       setBusy(section, false);
     });
   }
 
-  function createSelectField(labelText) {
+  function createTrackSelect(labelText, className) {
     const container = document.createElement('div');
-    container.className = 'trackrules-field';
-
-    const label = document.createElement('label');
-    label.textContent = labelText;
-    container.appendChild(label);
+    container.className = 'selectContainer trackSelectionFieldContainer';
 
     const select = document.createElement('select');
     select.setAttribute('is', 'emby-select');
-    select.className = 'trackrules-select';
-    container.appendChild(select);
+    select.className = `detailTrackSelect ${className}`;
+    select.setAttribute('label', labelText);
+    select.disabled = true;
 
+    container.appendChild(select);
     return { container, select };
   }
 
-  function removeWidget(view) {
-    const existing = view.querySelector(`.${WIDGET_CLASS}`);
-    if (existing && existing.parentElement) {
-      existing.parentElement.removeChild(existing);
-    }
+  function createGuardField() {
+    const container = document.createElement('label');
+    container.className = 'trackrules-guard-toggle';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'trackrules-dont-transcode';
+
+    const span = document.createElement('span');
+    span.textContent = "Don't transcode when enforcing this rule";
+
+    container.appendChild(checkbox);
+    container.appendChild(span);
+
+    return { container, checkbox };
+  }
+
+  function createActionRow() {
+    const container = document.createElement('div');
+    container.className = 'trackrules-actions';
+
+    const previewButton = createButton('Preview', 'trackrules-btn-preview');
+    const saveButton = createButton('Save defaults', 'trackrules-btn-save');
+    const resetButton = createButton('Reset to inherit', 'trackrules-btn-reset button-flat');
+
+    container.appendChild(previewButton);
+    container.appendChild(saveButton);
+    container.appendChild(resetButton);
+
+    return { container, previewButton, saveButton, resetButton };
+  }
+
+  function createButton(text, className) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('is', 'emby-button');
+    button.className = `raised button-raised ${className}`;
+    button.textContent = text;
+    return button;
+  }
+
+  function attachEventHandlers(section, series) {
+    const {
+      previewButton,
+      saveButton,
+      resetButton,
+    } = section._trackRules.elements;
+
+    previewButton.addEventListener('click', () => {
+      handlePreview(section, series).catch((err) => {
+        console.error('[TrackRules] Preview failed', err);
+        setStatus(section, 'Preview failed. See server logs for details.', true);
+        setBusy(section, false);
+      });
+    });
+
+    saveButton.addEventListener('click', () => {
+      handleSave(section, series).catch((err) => {
+        console.error('[TrackRules] Save failed', err);
+        setStatus(section, 'Failed to save series defaults.', true);
+        setBusy(section, false);
+      });
+    });
+
+    resetButton.addEventListener('click', () => {
+      handleReset(section).catch((err) => {
+        console.error('[TrackRules] Reset failed', err);
+        setStatus(section, 'Unable to reset to inherited defaults.', true);
+        setBusy(section, false);
+      });
+    });
   }
 
   async function initializeWidget(section, series) {
     setBusy(section, true);
-    setStatus(section, 'Loading series languages…');
+    setStatus(section, 'Loading available tracks…');
 
-    const state = section._trackRules.state;
     const apiClient = getApiClient();
+    const state = section._trackRules.state;
 
-    const results = await Promise.all([
+    const [languages, rules] = await Promise.all([
       apiClient.ajax({
         type: 'GET',
         url: apiClient.getUrl(`TrackRules/series/${series.Id}/languages`),
@@ -172,93 +248,147 @@
       }),
     ]);
 
-    const languages = results[0];
-    const rules = results[1];
-
     if (!section.isConnected) {
       return;
     }
 
-    state.languages = languages || { audio: [], subtitles: [] };
+    state.languages = languages || {};
     state.userRules = rules || { Rules: [] };
-    state.previewItemId = languages && languages.previewItemId ? languages.previewItemId : null;
+    state.previewItemId = (languages && (languages.PreviewItemId || languages.previewItemId)) || null;
     state.currentRule = findSeriesRule(state.userRules, state.seriesId);
 
     populateOptions(section, state);
+
+    if (!state.previewItemId) {
+      setStatus(section, 'Preview unavailable until an episode has media info.', true);
+    } else if (state.currentRule) {
+      setStatus(section, 'Per-series defaults are active.');
+    } else {
+      setStatus(section, 'Using library/global defaults. Pick tracks and save to override.');
+    }
+
     setBusy(section, false);
 
-    if (state.previewItemId) {
-      setStatus(section, 'Select tracks, preview the change, then save.');
-    } else {
-      setStatus(section, 'No episode media streams found yet; preview is disabled.');
+    if (!state.previewItemId) {
       section._trackRules.elements.previewButton.disabled = true;
     }
   }
 
   function populateOptions(section, state) {
-    const { audioSelect, subtitleSelect } = section._trackRules.elements;
-    const audio = state.languages && Array.isArray(state.languages.audio) ? state.languages.audio : [];
-    const subtitles = state.languages && Array.isArray(state.languages.subtitles) ? state.languages.subtitles : [];
+    const {
+      audioSelect,
+      subtitleSelect,
+      subsModeSelect,
+      guardToggle,
+    } = section._trackRules.elements;
 
-    populateSelect(audioSelect, buildAudioOptions(audio));
-    populateSelect(subtitleSelect, buildSubtitleOptions(subtitles));
+    const audioOptions = buildAudioOptions(state.languages && state.languages.Audio ? state.languages.Audio : state.languages?.audio);
+    const subtitleOptions = buildSubtitleOptions(state.languages && state.languages.Subtitles ? state.languages.Subtitles : state.languages?.subtitles);
 
-    const existing = state.currentRule;
-    const existingAudio = existing && Array.isArray(existing.Audio) ? existing.Audio[0] : (existing && Array.isArray(existing.audio) ? existing.audio[0] : null);
-    const existingSubs = existing && Array.isArray(existing.Subs) ? existing.Subs[0] : (existing && Array.isArray(existing.subs) ? existing.subs[0] : null);
-    const audioValue = normalizeLanguageValue(existingAudio, AUDIO_ANY);
-    const subtitleValue = normalizeLanguageValue(existingSubs, SUB_NONE);
+    populateSelect(audioSelect, audioOptions, AUDIO_ANY);
+    populateSelect(subtitleSelect, subtitleOptions, SUB_NONE);
+    populateSelect(subsModeSelect, buildSubtitleModeOptions(), SUBTITLE_MODE_DEFAULT);
+
+    const current = state.currentRule;
+    const audioValue = normalizeLanguageValue(
+      getRuleListValue(current, 'Audio', AUDIO_ANY),
+      AUDIO_ANY);
+    const subtitleValue = normalizeLanguageValue(
+      getRuleListValue(current, 'Subs', SUB_NONE),
+      SUB_NONE);
+    const subsModeValue = Number(getRuleField(current, 'SubsMode', SUBTITLE_MODE_DEFAULT));
+    const dontTranscode = !!getRuleField(current, 'DontTranscode', false);
+
+    ensureOption(audioSelect, audioValue);
+    ensureOption(subtitleSelect, subtitleValue);
+    ensureOption(subsModeSelect, subsModeValue.toString());
 
     audioSelect.value = audioValue;
     subtitleSelect.value = subtitleValue;
+    subsModeSelect.value = subsModeValue.toString();
+    guardToggle.checked = dontTranscode;
+
+    audioSelect.disabled = false;
+    subtitleSelect.disabled = false;
+    subsModeSelect.disabled = false;
   }
 
-  function populateSelect(select, options) {
+  function buildAudioOptions(languageOptions) {
+    const options = [{ value: AUDIO_ANY, label: 'Best available' }];
+    (languageOptions || []).forEach((option) => {
+      const code = option && (option.Code || option.code);
+      if (!code) {
+        return;
+      }
+
+      options.push({
+        value: code.toLowerCase(),
+        label: formatLanguageLabel(option),
+      });
+    });
+    return options;
+  }
+
+  function buildSubtitleOptions(languageOptions) {
+    const options = [
+      { value: SUB_NONE, label: 'Off' },
+      { value: SUB_ANY, label: 'Any language' },
+    ];
+
+    (languageOptions || []).forEach((option) => {
+      const code = option && (option.Code || option.code);
+      if (!code) {
+        return;
+      }
+
+      options.push({
+        value: code.toLowerCase(),
+        label: formatLanguageLabel(option),
+      });
+    });
+
+    return options;
+  }
+
+  function buildSubtitleModeOptions() {
+    return SUBTITLE_MODES.map((mode) => ({
+      value: mode.value.toString(),
+      label: mode.label,
+    }));
+  }
+
+  function populateSelect(select, options, fallback) {
     while (select.firstChild) {
       select.removeChild(select.firstChild);
     }
 
-    options.forEach((opt) => {
+    (options || []).forEach((opt) => {
       const option = document.createElement('option');
-      option.value = opt.value;
-      option.textContent = opt.label;
+      option.value = opt.value != null ? opt.value.toString() : '';
+      option.textContent = opt.label || '';
       select.appendChild(option);
     });
+
+    if (!select.options.length && fallback) {
+      const placeholder = document.createElement('option');
+      placeholder.value = fallback;
+      placeholder.textContent = fallback;
+      select.appendChild(placeholder);
+    }
   }
 
-  function buildAudioOptions(languages) {
-    const options = [{ value: AUDIO_ANY, label: 'Best available' }];
-    languages.forEach((option) => {
-      if (!option || !option.code) {
-        return;
-      }
+  function ensureOption(select, value) {
+    if (!value) {
+      return;
+    }
 
-      options.push({
-        value: option.code,
-        label: formatLanguageLabel(option),
-      });
-    });
-    return options;
-  }
-
-  function buildSubtitleOptions(languages) {
-    const options = [
-      { value: SUB_NONE, label: 'No subtitles' },
-      { value: SUB_ANY, label: 'Any available' },
-    ];
-
-    languages.forEach((option) => {
-      if (!option || !option.code) {
-        return;
-      }
-
-      options.push({
-        value: option.code,
-        label: formatLanguageLabel(option),
-      });
-    });
-
-    return options;
+    const exists = Array.from(select.options).some((opt) => opt.value === value.toString());
+    if (!exists) {
+      const option = document.createElement('option');
+      option.value = value.toString();
+      option.textContent = value.toString().toUpperCase();
+      select.appendChild(option);
+    }
   }
 
   function formatLanguageLabel(option) {
@@ -266,12 +396,13 @@
       return '';
     }
 
-    const base = option.label || option.code || '';
-    if (option.streamCount && option.streamCount > 0) {
-      return `${base} (${option.streamCount})`;
+    const label = option.Label || option.label || option.Code || option.code || '';
+    if (option.StreamCount > 1 || option.streamCount > 1) {
+      const count = option.StreamCount || option.streamCount;
+      return `${label} (${count})`;
     }
 
-    return base;
+    return label;
   }
 
   function normalizeLanguageValue(value, fallback) {
@@ -279,34 +410,45 @@
       return fallback;
     }
 
-    const normalized = value.toString().trim().toLowerCase();
-    return normalized || fallback;
+    return value.toString().trim().toLowerCase() || fallback;
   }
 
-  function attachEventHandlers(section, series) {
-    const { previewButton, saveButton } = section._trackRules.elements;
+  function getRuleListValue(rule, property, fallback) {
+    if (!rule) {
+      return fallback;
+    }
 
-    previewButton.addEventListener('click', () => {
-      handlePreview(section, series).catch((err) => {
-        console.error('[TrackRules] Preview failed', err);
-        setStatus(section, 'Preview failed. Check server logs for details.', true);
-        setBusy(section, false);
-      });
-    });
+    const direct = rule[property];
+    const lower = rule[property.charAt(0).toLowerCase() + property.slice(1)];
+    const source = Array.isArray(direct) ? direct : Array.isArray(lower) ? lower : null;
+    if (!source || source.length === 0) {
+      return fallback;
+    }
 
-    saveButton.addEventListener('click', () => {
-      handleSave(section, series).catch((err) => {
-        console.error('[TrackRules] Save failed', err);
-        setStatus(section, 'Saving failed. Please retry.', true);
-        setBusy(section, false);
-      });
-    });
+    return source[0];
+  }
+
+  function getRuleField(rule, property, fallback) {
+    if (!rule) {
+      return fallback;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(rule, property)) {
+      return rule[property];
+    }
+
+    const altKey = property.charAt(0).toLowerCase() + property.slice(1);
+    if (Object.prototype.hasOwnProperty.call(rule, altKey)) {
+      return rule[altKey];
+    }
+
+    return fallback;
   }
 
   async function handlePreview(section, series) {
     const state = section._trackRules.state;
     if (!state.previewItemId) {
-      setStatus(section, 'Preview is unavailable until the series has episodes with media streams.', true);
+      setStatus(section, 'No preview item available yet.', true);
       return;
     }
 
@@ -333,25 +475,23 @@
     }
 
     setBusy(section, false);
-
     setStatus(section, describePreview(response));
   }
 
   async function handleSave(section, series) {
     const state = section._trackRules.state;
     setBusy(section, true);
-    setStatus(section, 'Saving…');
+    setStatus(section, 'Saving series defaults…');
 
-    const apiClient = getApiClient();
     const nextRule = buildRuleFromSelection(section, series.Id);
     const nextRules = buildRuleCollection(state, nextRule);
-
     const payload = {
       version: resolveVersion(state.userRules),
       userId: state.userId,
       rules: nextRules,
     };
 
+    const apiClient = getApiClient();
     const response = await apiClient.ajax({
       type: 'PUT',
       url: apiClient.getUrl(`TrackRules/user/${state.userId}`),
@@ -368,7 +508,44 @@
     state.currentRule = findSeriesRule(state.userRules, state.seriesId);
 
     setBusy(section, false);
-    setStatus(section, 'Series defaults saved successfully.');
+    setStatus(section, 'Series defaults saved.');
+  }
+
+  async function handleReset(section) {
+    const state = section._trackRules.state;
+    if (!state.currentRule) {
+      setStatus(section, 'Series already inherits library/global rules.');
+      return;
+    }
+
+    setBusy(section, true);
+    setStatus(section, 'Removing series override…');
+
+    const nextRules = buildRuleCollection(state, null);
+    const payload = {
+      version: resolveVersion(state.userRules),
+      userId: state.userId,
+      rules: nextRules,
+    };
+
+    const apiClient = getApiClient();
+    const response = await apiClient.ajax({
+      type: 'PUT',
+      url: apiClient.getUrl(`TrackRules/user/${state.userId}`),
+      dataType: 'json',
+      contentType: 'application/json',
+      data: JSON.stringify(payload),
+    });
+
+    if (!section.isConnected) {
+      return;
+    }
+
+    state.userRules = response || payload;
+    state.currentRule = null;
+    populateOptions(section, state);
+    setBusy(section, false);
+    setStatus(section, 'Reverted to library/global defaults.');
   }
 
   function buildRuleCollection(state, nextRule) {
@@ -391,7 +568,10 @@
       return target !== seriesId;
     });
 
-    filtered.push(nextRule);
+    if (nextRule) {
+      filtered.push(nextRule);
+    }
+
     return filtered;
   }
 
@@ -412,32 +592,35 @@
   }
 
   function buildRuleFromSelection(section, seriesId) {
-    const { audioSelect, subtitleSelect } = section._trackRules.elements;
-    const state = section._trackRules.state;
-    const existing = state.currentRule || {};
-
-    const audioSelection = normalizeLanguageValue(audioSelect.value, AUDIO_ANY);
-    const subtitleSelection = normalizeLanguageValue(subtitleSelect.value, SUB_NONE);
+    const {
+      audioSelect,
+      subtitleSelect,
+      subsModeSelect,
+      guardToggle,
+    } = section._trackRules.elements;
 
     return {
       Scope: SERIES_SCOPE,
       TargetId: seriesId,
-      Audio: [audioSelection],
-      Subs: [subtitleSelection],
-      SubsMode: existing.SubsMode ?? existing.subsMode ?? SUBTITLE_MODE_DEFAULT,
-      DontTranscode: existing.DontTranscode ?? existing.dontTranscode ?? false,
-      Enabled: existing.Enabled ?? existing.enabled ?? true,
+      Audio: [normalizeLanguageValue(audioSelect.value, AUDIO_ANY)],
+      Subs: [normalizeLanguageValue(subtitleSelect.value, SUB_NONE)],
+      SubsMode: Number(subsModeSelect.value || SUBTITLE_MODE_DEFAULT),
+      DontTranscode: !!guardToggle.checked,
+      Enabled: true,
     };
   }
 
   function findSeriesRule(ruleSet, seriesId) {
-    if (!ruleSet || !Array.isArray(ruleSet.Rules) && !Array.isArray(ruleSet.rules)) {
+    if (!ruleSet) {
       return null;
     }
 
     const rules = Array.isArray(ruleSet.Rules) ? ruleSet.Rules : ruleSet.rules;
-    const target = (seriesId || '').toString().toLowerCase();
+    if (!Array.isArray(rules)) {
+      return null;
+    }
 
+    const target = (seriesId || '').toString().toLowerCase();
     return rules.find((rule) => {
       const scope = typeof rule.Scope === 'number' ? rule.Scope : rule.scope;
       if (scope !== SERIES_SCOPE) {
@@ -450,19 +633,31 @@
   }
 
   function setBusy(section, busy) {
-    const { audioSelect, subtitleSelect, previewButton, saveButton } = section._trackRules.elements;
-    [audioSelect, subtitleSelect, previewButton, saveButton].forEach((element) => {
+    const {
+      audioSelect,
+      subtitleSelect,
+      subsModeSelect,
+      guardToggle,
+      previewButton,
+      saveButton,
+      resetButton,
+    } = section._trackRules.elements;
+
+    const inputs = [
+      audioSelect,
+      subtitleSelect,
+      subsModeSelect,
+      guardToggle,
+      previewButton,
+      saveButton,
+      resetButton,
+    ];
+
+    inputs.forEach((element) => {
       if (element) {
         element.disabled = !!busy;
       }
     });
-
-    if (!busy) {
-      const state = section._trackRules.state;
-      if (!state.previewItemId && previewButton) {
-        previewButton.disabled = true;
-      }
-    }
   }
 
   function setStatus(section, message, isError = false) {
@@ -494,18 +689,24 @@
     }
 
     if (typeof result.SubtitleStreamIndex === 'number') {
-      if (result.SubtitleStreamIndex < 0) {
-        parts.push('Subtitles → Off');
-      } else {
-        parts.push(`Subtitles → #${result.SubtitleStreamIndex}`);
-      }
+      parts.push(result.SubtitleStreamIndex < 0 ? 'Subtitles → Off' : `Subtitles → #${result.SubtitleStreamIndex}`);
     }
 
-    if (parts.length === 0) {
-      return 'No changes are required for this selection.';
+    if (!parts.length) {
+      return 'No changes will be sent for this selection.';
     }
 
     return parts.join(' · ');
   }
-})();
 
+  function removeWidget(view) {
+    const existing = view.querySelector(`.${WIDGET_CLASS}`);
+    if (!existing) {
+      return;
+    }
+
+    if (existing.parentElement) {
+      existing.parentElement.removeChild(existing);
+    }
+  }
+})();

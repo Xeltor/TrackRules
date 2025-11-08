@@ -40,6 +40,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 VERSION="$1"
+MANIFEST_VERSION="${VERSION//-debug/}"
+
+if [[ "$MANIFEST_VERSION" != "$VERSION" ]]; then
+  echo "Manifest version sanitized: $VERSION -> $MANIFEST_VERSION"
+fi
 NOTES_FILE="${2:-}"
 META_JSON="$REPO_ROOT/TrackRules.Plugin/meta.json"
 MANIFEST_JSON="$REPO_ROOT/manifest.json"
@@ -137,7 +142,7 @@ TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 echo "Updating manifest.json..."
 jq --arg guid "$PLUGIN_GUID" \
-   --arg version "$VERSION" \
+   --arg version "$MANIFEST_VERSION" \
    --arg changelog "$RELEASE_NOTES" \
    --arg targetAbi "$TARGET_ABI" \
    --arg sourceUrl "$DOWNLOAD_URL" \
